@@ -1,11 +1,17 @@
+
 {
   "name": "huduma-chap-chap",
   "version": "1.0.0",
   "private": true,
   "description": "Huduma Chap Chap service enquiries and secure wallet backend",
   "main": "server.js",
-  "scripts": { "start": "node server.js", "dev": "node --watch server.js" },
-  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
