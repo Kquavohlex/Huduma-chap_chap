@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const helmet = require('helmet');
+const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -12,6 +13,7 @@ const path = require('path');
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const isProd = process.env.NODE_ENV === 'production';
+
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   console.error('FATAL: Set JWT_SECRET to a random secret of at least 32 characters.');
   process.exit(1);
@@ -20,6 +22,7 @@ if (!process.env.DATABASE_URL) {
   console.error('FATAL: Set DATABASE_URL to a PostgreSQL connection string.');
   process.exit(1);
 }
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
@@ -51,6 +54,26 @@ const SERVICES = [
 
 app.disable('x-powered-by');
 app.use(helmet({ contentSecurityPolicy: false }));
+
+// Enable CORS for cross-origin frontend requests (e.g. GitHub Pages) with cookies/credentials support
+const allowedOrigins = [
+  process.env.APP_BASE_URL,
+  'https://kquavohlex.github.io',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000'
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || !isProd) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json({ limit: '30kb' }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -98,11 +121,17 @@ async function initDb() {
 function makeToken(user) {
   return jwt.sign({ sub: String(user.id), email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
 }
+
 function setAuthCookie(res, token) {
   res.cookie('hcc_session', token, {
-    httpOnly: true, secure: isProd, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000
+    httpOnly: true,
+    secure: true, // Required for cross-site cookies in modern browsers
+    sameSite: 'none', // Allows cross-site cookie passing between GitHub Pages and Render
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60 * 1000
   });
 }
+
 async function auth(req, res, next) {
   try {
     const token = req.cookies.hcc_session;
@@ -116,9 +145,11 @@ async function auth(req, res, next) {
     return res.status(401).json({ error: 'Your session has expired. Please log in again.' });
   }
 }
+
 function publicUser(u) {
   return { id: u.id, name: u.name, email: u.email, phone: u.phone, walletBalance: Number(u.wallet_balance), referralCode: u.referral_code, createdAt: u.created_at };
 }
+
 function normalizePhone(phone) {
   let p = String(phone || '').replace(/[\s()+-]/g, '');
   if (p.startsWith('0')) p = '254' + p.slice(1);
@@ -126,16 +157,6 @@ function normalizePhone(phone) {
   if (!/^254[17]\d{8}$/.test(p)) throw new Error('Enter a valid Kenyan mobile number, for example 0712345678.');
   return p;
 }
-function requireSameOrigin(req, res, next) {
-  const origin = req.get('origin');
-  const expected = process.env.APP_BASE_URL;
-  if (origin && expected) {
-    try { if (new URL(origin).origin !== new URL(expected).origin) return res.status(403).json({ error: 'Request origin rejected.' }); }
-    catch { return res.status(403).json({ error: 'Request origin rejected.' }); }
-  }
-  next();
-}
-app.use('/api', requireSameOrigin);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'Huduma Chap Chap API' }));
 app.get('/api/services', (_req, res) => res.json({ services: SERVICES }));
@@ -169,10 +190,17 @@ app.post('/api/auth/login', async (req, res, next) => {
     const data = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(128) }).parse(req.body);
     const result = await pool.query('SELECT id,name,email,phone,password_hash,wallet_balance,referral_code,created_at FROM users WHERE email=$1', [data.email.toLowerCase()]);
     if (!result.rowCount || !(await bcrypt.compare(data.password, result.rows[0].password_hash))) return res.status(401).json({ error: 'Email or password is incorrect.' });
-    const user = result.rows[0]; setAuthCookie(res, makeToken(user)); res.json({ user: publicUser(user) });
+    const user = result.rows[0]; 
+    setAuthCookie(res, makeToken(user)); 
+    res.json({ user: publicUser(user) });
   } catch (e) { if (e instanceof z.ZodError) return res.status(400).json({ error: 'Enter a valid email and password.' }); next(e); }
 });
-app.post('/api/auth/logout', (_req, res) => { res.clearCookie('hcc_session', { httpOnly: true, secure: isProd, sameSite: 'lax', path: '/' }); res.json({ ok: true }); });
+
+app.post('/api/auth/logout', (_req, res) => { 
+  res.clearCookie('hcc_session', { httpOnly: true, secure: true, sameSite: 'none', path: '/' }); 
+  res.json({ ok: true }); 
+});
+
 app.get('/api/auth/me', auth, (req, res) => res.json({ user: publicUser(req.user) }));
 
 app.get('/api/wallet', auth, async (req, res, next) => {
@@ -210,11 +238,8 @@ app.post('/api/wallet/deposit', auth, async (req, res, next) => {
   finally { client.release(); }
 });
 
-// Tinypesa sends callbacks to the URL configured in the Tinypesa dashboard/IPN settings.
-// Tinypesa documents no webhook signature. Therefore, never credit from callback fields alone:
-// look up the payment independently with Tinypesa and reconcile reference + amount first.
 app.post('/api/payments/tinypesa', async (req, res) => {
-  res.status(200).json({ received: true }); // acknowledge quickly; process safely below
+  res.status(200).json({ received: true });
   try {
     const body = req.body || {};
     const reference = String(body.ExternalReference || body.external_reference || body.account_no || '').trim();
@@ -267,6 +292,7 @@ app.post('/api/enquiries', auth, async (req, res, next) => {
   } catch (e) { await client.query('ROLLBACK'); next(e); }
   finally { client.release(); }
 });
+
 app.get('/api/enquiries', auth, async (req, res, next) => {
   try { const result = await pool.query('SELECT id,service_name,price,details,status,created_at FROM service_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100', [req.user.id]); res.json({ requests: result.rows }); }
   catch (e) { next(e); }
@@ -276,6 +302,7 @@ app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
 app.use((err, _req, res, _next) => {
   console.error(err.stack || err.message || err);
   res.status(500).json({ error: 'Something went wrong. Please try again.' });
