@@ -20,33 +20,17 @@
 <form id="enquiryForm" class="form hidden"><div class="notice"><strong>Service charge: KSh 500</strong><br>It will be deducted only if your wallet has sufficient funds and the request is successfully saved.</div><div class="field"><label for="enquiryService">Service</label><input id="enquiryService" readonly></div><div class="field"><label for="enquiryDetails">Additional details (optional)</label><textarea id="enquiryDetails" maxlength="2000" placeholder="Tell us briefly what assistance you need. Do not enter passwords or M-Pesa PINs."></textarea></div><button class="btn primary full" type="submit">Confirm enquiry · KSh 500</button></form>
 <div class="disclaimer">Never share your M-Pesa PIN or password with support staff.</div></div></div>
 <script>
-// Connected to live Render backend
 const API_BASE = 'https://huduma-chap-chap.onrender.com';
-
 const $=id=>document.getElementById(id);let services=[],authMode='login',modalMode='auth',selectedService='';let currentUser=null;
 const icons={'Passport application assistance':'🛂','Visa application assistance':'✈️','Birth certificate assistance':'📄','Certificate of Good Conduct assistance':'🛡️','National ID assistance':'🪪','KRA PIN assistance':'🧾','KRA tax returns assistance':'📊','Business registration assistance':'🏢','NTSA services assistance':'🚘','HELB services assistance':'🎓','Travel medical appointment assistance':'🩺','Travel document assistance':'🧳','Printing services':'🖨️','Scanning and PDF services':'📑','Typing and document formatting':'⌨️','CV and application letter preparation':'📝','Online job application assistance':'💼','Passport-size photo service':'📸'};
-function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-
-async function api(url, opts = {}) {
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;}[c]));}
+async function api(url,opts={}){
   const fullUrl = url.startsWith('http') ? url : API_BASE + url;
-  const r = await fetch(fullUrl, {
-    ...opts,
-    credentials: 'include', // Crucial for cross-domain cookies between GitHub Pages and Render
-    headers: {
-      'Content-Type': 'application/json',
-      ...(opts.headers || {})
-    }
-  });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    const e = new Error(d.error || 'Request failed. Please try again.');
-    e.status = r.status;
-    e.data = d;
-    throw e;
-  }
+  const r=await fetch(fullUrl,{...opts,credentials:'include',headers:{'Content-Type':'application/json',...(opts.headers||{})}});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){const e=new Error(d.error||'Request failed. Please try again.');e.status=r.status;e.data=d;throw e;}
   return d;
 }
-
 function showStatus(message,type='ok',target='modalStatus'){const el=$(target);el.textContent=message;el.className='status show '+(type==='err'?'err':'ok');}
 function clearStatus(){ $('modalStatus').className='status';$('modalStatus').textContent=''; }
 function openModal(mode='auth',service=''){modalMode=mode;selectedService=service;clearStatus();$('modalBg').classList.add('show');$('authArea').classList.toggle('hidden',mode!=='auth');$('depositForm').classList.toggle('hidden',mode!=='deposit');$('enquiryForm').classList.toggle('hidden',mode!=='enquiry');if(mode==='auth'){setAuthMode(authMode);}if(mode==='deposit'){$('modalTitle').textContent='Deposit to wallet';$('modalIntro').textContent='Enter your amount and M-Pesa number.';$('depositPhone').value=currentUser?.phone||'';}if(mode==='enquiry'){$('modalTitle').textContent='Enquire about service';$('modalIntro').textContent='Confirm the service request and KSh 500 charge.';$('enquiryService').value=service;$('enquiryDetails').value='';}document.body.style.overflow='hidden';}
